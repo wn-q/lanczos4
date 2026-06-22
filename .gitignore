@@ -1,0 +1,11 @@
+tools/
+obj_dir/
+tmp_chrome_profile/
+
+*.zip
+*.vcd
+*.fst
+*.log
+
+test.txt
+对话.md

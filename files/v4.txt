@@ -1,0 +1,110 @@
+# line_buffer SRAM 化：RMW 读改写回方案
+
+## Summary
+- 将当前 `line_buffer` 从 `reg array` 替换为 **7 个 `ram_rws_256x160` SRAM bank**。
+- 每个 SRAM bank 保存一行历史像素：`4096 pixels / 16 = 256 words`，每个 word 为 `16 * 10 = 160 bit`。
+- 因为 RAM 没有写 mask，部分像素写入统一采用 **RMW：read-modify-write**。
+- 当前阶段只改 `line_buffer` 存储结构和写回控制；`right_buffer` 仍保持寄存器数组。
+
+## Key Changes
+- 新建 `ram_rws_256x160.v`：
+  - 按 `ram_rws_4096x80.v` 同款端口写法。
+  - 地址宽度改成 `8 bit`。
+  - 数据宽度改成 `160 bit`。
+  - 深度改成 `256`。
+- 在 `downscale_block_buffer.v` 中删除：
+  - `reg [PIXEL_W-1:0] line_buffer [0:6][0:4095]`
+- 新增 7 个 line SRAM bank：
+  - `linebuf_bank0` 到 `linebuf_bank6`
+  - 每个 bank 用 `ram_rws_256x160`
+- 地址映射固定为：
+  - `bank_idx = global_y % 7`
+  - `word_addr = global_x[11:4]`
+  - `lane_idx = global_x[3:0]`
+- 新增 `line_y_tag[0:6]`：
+  - 记录每个 bank 当前保存的真实 `global_y`
+  - 每次某个 bank 写入新行时更新 tag
+  - 读历史行时 tag 不匹配则认为数据无效
+
+## RMW 写回逻辑
+- 新增一个统一的 RMW 子状态机：
+  - `RMW_IDLE`
+  - `RMW_READ`
+  - `RMW_MERGE`
+  - `RMW_WRITE`
+  - `RMW_DONE`
+- RMW 请求需要锁存：
+  - `rmw_bank`
+  - `rmw_word_addr`
+  - `rmw_start_lane`
+  - `rmw_pixel_num`
+  - `rmw_pixel_data`
+- RMW 执行流程：
+  - `RMW_READ`：对目标 SRAM bank 发读请求。
+  - `RMW_MERGE`：拿到旧 `160bit word`，只替换目标 lane。
+  - `RMW_WRITE`：把合并后的新 `160bit word` 整 word 写回。
+  - `RMW_DONE`：通知主状态机当前写回完成。
+- 跨 word 写入拆成两个 RMW 请求：
+  - 例如写 `x=12~18`
+  - 第一次：`word_addr=0, lane12~15`
+  - 第二次：`word_addr=1, lane0~2`
+
+## 写入场景映射
+- `row0~row6` 初始填充：
+  - 当前输入天然是 16 pixels 对齐，直接整 word 写入 SRAM。
+  - 不走 RMW。
+- row>=7 的非最后段：
+  - `cur16_reg[0:8]` 写回当前 word，走 RMW。
+  - `cur16_reg[9:15]` 保存到 `left7_reg`。
+- 下一段写回时：
+  - 先把上一段 `left7_reg[0:6]` 写回上一 word 的后 7 个 lane，走 RMW。
+  - 再写当前段 `cur16_reg[0:8]`，走 RMW。
+- 最后一段：
+  - 如果不是本行第一段，先写回上一段 `left7_reg`。
+  - 当前段属于 block 宽度范围内的像素全部写回。
+  - 如果刚好覆盖完整 16 lanes，可直接整 word 写；否则走 RMW。
+- `right_buffer` 保存旧行右 7 列：
+  - 在 line SRAM 对应 word 被覆盖前，先读旧 word。
+  - 抽取右 7 个 pixel 保存到 `right_buffer`。
+  - 如果右 7 列跨 word，则拆成两次读。
+
+## SRAM 访问仲裁
+- 7 个 line SRAM bank 共享一套控制逻辑：
+  - 根据 `bank_idx` 只使能目标 bank 的 `re/we`。
+  - 其他 bank `re/we=0`。
+- 同一个周期不对同一个 bank 做读写同地址访问。
+- 主状态机在以下阶段暂停接收新数据：
+  - RMW 正在执行
+  - right_buffer 正在读旧行右 7 列
+- `data_rdy=1` 只在 `ST_RECV` 且没有 SRAM 写回/读旧行操作时拉高。
+
+## 暂不改动
+- 暂不重构 64-tap window read。
+- 暂不实现 bottom_buffer。
+- 暂不实现 corner_buffer。
+- 暂不处理 tile 边界。
+- 暂不改变 Lanczos LUT/MAC 计算逻辑。
+
+## Test Plan
+- 语法检查：
+  - `iverilog -g2012 -tnull ram_rws_256x160.v downscale_block_buffer.v`
+  - `verilator --lint-only ram_rws_256x160.v downscale_block_buffer.v`
+- RMW 写回场景：
+  - 写 `x=0~8`：只更新 lane0~8。
+  - 写 `x=9~15`：只更新 lane9~15。
+  - 写 `x=12~18`：拆成两个 word 写回。
+  - 写完整 `x=16~31`：直接整 word 写。
+- block 流程场景：
+  - row0~row6：直接整 word 写入 SRAM。
+  - row7 seg0：计算后 RMW 写前 9 个，后 7 个进入 `left7_reg`。
+  - row7 seg1：先 RMW 写上一段 left7，再写当前段。
+  - block 最后一段：有效像素全部写回。
+- right_buffer 场景：
+  - 行被覆盖前，能从 SRAM 旧 word 中取出右 7 列。
+  - 右 7 列跨 word 时能正确拆读并拼入 `right_buffer`。
+
+## Assumptions
+- `ram_rws_256x160` 没有写 mask。
+- SRAM 同步读，`re` 后下一拍 `dout` 有效。
+- 当前输入 `data_in[159:0]` 对应连续 16 个 10bit pixel。
+- 当前阶段只完成 line_buffer SRAM 替换和 RMW 写回闭环。

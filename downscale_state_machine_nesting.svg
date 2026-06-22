@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1180" viewBox="0 0 1800 1180">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#34495e"/>
+    </marker>
+    <style>
+      .title { font: 700 34px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #17202a; }
+      .subtitle { font: 18px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #566573; }
+      .box-title { font: 700 22px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #17202a; }
+      .box-text { font: 17px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #273746; }
+      .small { font: 15px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #566573; }
+      .edge { stroke: #34495e; stroke-width: 2.4; fill: none; marker-end: url(#arrow); }
+      .edge-soft { stroke: #7f8c8d; stroke-width: 2; fill: none; marker-end: url(#arrow); stroke-dasharray: 8 6; }
+      .panel { fill: #f8fbfd; stroke: #d5dde5; stroke-width: 2; rx: 14; }
+      .top { fill: #eaf4ff; stroke: #5dade2; stroke-width: 2.5; rx: 12; }
+      .busy { fill: #fff4e6; stroke: #f5b041; stroke-width: 2.5; rx: 12; }
+      .write { fill: #edf7ee; stroke: #58d68d; stroke-width: 2.5; rx: 12; }
+      .exec { fill: #f4ecf7; stroke: #af7ac5; stroke-width: 2.2; rx: 10; }
+      .sram { fill: #fcf3cf; stroke: #d4ac0d; stroke-width: 2.2; rx: 10; }
+      .note { fill: #ffffff; stroke: #ccd1d1; stroke-width: 1.8; rx: 10; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1800" height="1180" fill="#ffffff"/>
+
+  <text x="70" y="70" class="title">downscale_block_buffer 状态机嵌套/调度关系图</text>
+  <text x="72" y="104" class="subtitle">顶层 cur_state 管大阶段；win_state 管取 8x8 窗口；wb_state 管写回顺序；其余状态机是被调度的执行器。</text>
+
+  <rect x="58" y="135" width="1685" height="940" class="panel"/>
+
+  <!-- Top state machine -->
+  <rect x="120" y="185" width="300" height="110" class="top"/>
+  <text x="145" y="225" class="box-title">cur_state 顶层</text>
+  <text x="145" y="258" class="box-text">ST_RECV / ST_LANCZOS_BUSY</text>
+  <text x="145" y="283" class="box-text">ST_WRITEBACK / ST_FLUSH_RIGHT</text>
+
+  <rect x="520" y="165" width="250" height="95" class="top"/>
+  <text x="548" y="205" class="box-title">ST_RECV</text>
+  <text x="548" y="237" class="box-text">接收 16 像素段</text>
+
+  <rect x="850" y="165" width="315" height="95" class="top"/>
+  <text x="878" y="205" class="box-title">锁存当前段</text>
+  <text x="878" y="237" class="box-text">cur16_reg + calc_* 快照</text>
+
+  <rect x="1240" y="165" width="310" height="95" class="busy"/>
+  <text x="1268" y="205" class="box-title">ST_LANCZOS_BUSY</text>
+  <text x="1268" y="237" class="box-text">等待计算完成/响应窗口请求</text>
+
+  <path d="M420 240 C455 240 475 214 520 214" class="edge"/>
+  <path d="M770 214 C805 214 815 214 850 214" class="edge"/>
+  <path d="M1165 214 C1198 214 1208 214 1240 214" class="edge"/>
+  <text x="782" y="195" class="small">calc_segment_fire</text>
+  <text x="1174" y="195" class="small">lanczos_start</text>
+
+  <!-- Window read FSM -->
+  <rect x="1240" y="330" width="420" height="255" class="busy"/>
+  <text x="1270" y="370" class="box-title">win_state：8x8 window 读取器</text>
+  <text x="1270" y="406" class="box-text">WIN_IDLE：等 lanczos_window_req</text>
+  <text x="1270" y="435" class="box-text">WIN_TAP_PREP：判断当前 tap 来源</text>
+  <text x="1270" y="464" class="box-text">WIN_SRAM_READ：发 SRAM 读请求</text>
+  <text x="1270" y="493" class="box-text">WIN_SRAM_SAVE：保存返回像素</text>
+  <text x="1270" y="522" class="box-text">WIN_DONE：64 tap 完成，valid 拉高</text>
+  <text x="1270" y="555" class="small">只在 ST_LANCZOS_BUSY 期间工作</text>
+
+  <path d="M1395 260 L1395 330" class="edge"/>
+  <text x="1410" y="302" class="small">lanczos_window_req</text>
+
+  <rect x="840" y="355" width="310" height="80" class="exec"/>
+  <text x="865" y="390" class="box-title">寄存器路径</text>
+  <text x="865" y="420" class="box-text">right / cur16 / left7 / corner</text>
+
+  <rect x="840" y="470" width="310" height="80" class="sram"/>
+  <text x="865" y="505" class="box-title">SRAM 路径</text>
+  <text x="865" y="535" class="box-text">line SRAM / bottom_buffer</text>
+
+  <path d="M1240 410 C1195 410 1190 395 1150 395" class="edge-soft"/>
+  <path d="M1240 485 C1195 485 1190 510 1150 510" class="edge-soft"/>
+
+  <!-- Done to writeback -->
+  <rect x="1240" y="675" width="310" height="95" class="write"/>
+  <text x="1268" y="715" class="box-title">ST_WRITEBACK</text>
+  <text x="1268" y="747" class="box-text">进入 wb_state 写回调度</text>
+  <path d="M1395 585 L1395 675" class="edge"/>
+  <text x="1410" y="638" class="small">block_lanczos_done</text>
+
+  <!-- Writeback sequencer -->
+  <rect x="730" y="650" width="390" height="350" class="write"/>
+  <text x="760" y="690" class="box-title">wb_state：写回总调度器</text>
+  <text x="760" y="727" class="box-text">WB_IDLE：判断先做什么</text>
+  <text x="760" y="757" class="box-text">WB_SAVE_RIGHT：等 right 保存完</text>
+  <text x="760" y="787" class="box-text">WB_WRITE_L7：写 left7_reg</text>
+  <text x="760" y="817" class="box-text">WB_WRITE_CUR：写 cur16_reg</text>
+  <text x="760" y="847" class="box-text">WB_SAVE_CORNER：等 corner 保存完</text>
+  <text x="760" y="877" class="box-text">WB_WRITE_BOTTOM：写 bottom_buffer</text>
+  <text x="760" y="907" class="box-text">WB_DONE：写回完成</text>
+  <text x="760" y="950" class="small">只在 ST_WRITEBACK 期间推进</text>
+
+  <path d="M1240 725 C1190 725 1170 725 1120 725" class="edge"/>
+
+  <!-- Executors -->
+  <rect x="115" y="625" width="455" height="90" class="exec"/>
+  <text x="145" y="663" class="box-title">right_rd_state</text>
+  <text x="145" y="695" class="box-text">读旧 line SRAM 右 7 列 -> right_buffer</text>
+
+  <rect x="115" y="745" width="455" height="90" class="exec"/>
+  <text x="145" y="783" class="box-title">line_wr_state</text>
+  <text x="145" y="815" class="box-text">line SRAM RMW 写 left7 / cur16</text>
+
+  <rect x="115" y="865" width="455" height="90" class="exec"/>
+  <text x="145" y="903" class="box-title">corner_rd_state</text>
+  <text x="145" y="935" class="box-text">旧 bottom 右下 7x7 -> corner_buffer</text>
+
+  <rect x="115" y="985" width="455" height="90" class="exec"/>
+  <text x="145" y="1023" class="box-title">bottom_wr_state</text>
+  <text x="145" y="1055" class="box-text">当前 block 底部 7 行 -> bottom_buffer</text>
+
+  <path d="M730 755 C660 720 640 670 570 670" class="edge"/>
+  <text x="595" y="655" class="small">right_rd_start / done</text>
+
+  <path d="M730 805 C660 800 640 790 570 790" class="edge"/>
+  <text x="595" y="775" class="small">line_wr_start / done</text>
+
+  <path d="M730 875 C660 880 640 910 570 910" class="edge"/>
+  <text x="595" y="895" class="small">corner_rd_start / done</text>
+
+  <path d="M730 925 C660 960 640 1030 570 1030" class="edge"/>
+  <text x="595" y="1015" class="small">bottom_wr_start / done</text>
+
+  <!-- Flush right -->
+  <rect x="1240" y="900" width="350" height="95" class="write"/>
+  <text x="1268" y="940" class="box-title">ST_FLUSH_RIGHT</text>
+  <text x="1268" y="972" class="box-text">block 结束后补存最后 7 行右边界</text>
+
+  <path d="M1120 945 C1170 945 1190 945 1240 945" class="edge"/>
+  <text x="1136" y="925" class="small">need_tail_flush</text>
+  <path d="M1240 975 C1030 1110 730 1115 570 690" class="edge-soft"/>
+  <text x="1045" y="1090" class="small">复用 right_rd_state，最后一行从 cur16_reg 取</text>
+
+  <!-- SRAM mux note -->
+  <rect x="580" y="1040" width="660" height="85" class="note"/>
+  <text x="610" y="1076" class="box-title">SRAM access mux</text>
+  <text x="610" y="1108" class="box-text">统一仲裁 line SRAM / bottom_buffer 的读写端口，本身不推进状态机。</text>
+
+  <path d="M350 835 C470 1045 500 1078 580 1080" class="edge-soft"/>
+  <path d="M350 910 C455 1055 500 1078 580 1080" class="edge-soft"/>
+  <path d="M995 510 C1010 980 900 1038 910 1040" class="edge-soft"/>
+
+  <!-- Legend -->
+  <rect x="70" y="1100" width="420" height="50" class="note"/>
+  <rect x="92" y="1118" width="26" height="18" class="top"/>
+  <text x="128" y="1133" class="small">顶层阶段</text>
+  <rect x="220" y="1118" width="26" height="18" class="busy"/>
+  <text x="256" y="1133" class="small">窗口读取</text>
+  <rect x="350" y="1118" width="26" height="18" class="exec"/>
+  <text x="386" y="1133" class="small">执行器</text>
+</svg>
