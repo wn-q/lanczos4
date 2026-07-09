@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="920" viewBox="0 0 1280 920">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#7c3aed"/>
+    </marker>
+    <style>
+      .block { fill: #f8fafc; stroke: #111827; stroke-width: 3; }
+      .bottom { fill: #dcfce7; stroke: #16a34a; stroke-width: 4; }
+      .replaceBottom { fill: #fee2e2; stroke: #dc2626; stroke-width: 4; }
+      .corner { fill: #ede9fe; stroke: #7c3aed; stroke-width: 4; }
+      .halo { fill: #dbeafe; stroke: #2563eb; stroke-width: 4; stroke-dasharray: 10 7; }
+      .noSave { fill: #e5e7eb; stroke: #6b7280; stroke-width: 3; stroke-dasharray: 8 6; }
+      .label { font: 700 25px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #111827; }
+      .small { font: 600 18px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #374151; }
+      .green { font: 700 22px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #166534; }
+      .blue { font: 700 22px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #1d4ed8; }
+      .red { font: 700 20px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #b91c1c; }
+      .purple { font: 700 20px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #6d28d9; }
+      .gray { font: 700 18px "Microsoft YaHei", "Noto Sans CJK SC", Arial, sans-serif; fill: #4b5563; }
+      .arrow { stroke: #2563eb; stroke-width: 4; fill: none; marker-end: url(#arrow); }
+      .replaceArrow { stroke: #dc2626; stroke-width: 4; fill: none; stroke-dasharray: 12 8; marker-end: url(#arrow-red); }
+      .cornerArrow { stroke: #7c3aed; stroke-width: 4; fill: none; stroke-dasharray: 8 7; marker-end: url(#arrow-purple); }
+      .dash { stroke: #16a34a; stroke-width: 3; fill: none; stroke-dasharray: 8 7; }
+    </style>
+  </defs>
+
+  <rect x="0" y="0" width="1280" height="920" fill="#ffffff"/>
+
+  <text class="label" x="88" y="58">一条 block-row 的 bottom_buffer 保存整行下面 7 行</text>
+
+  <g transform="translate(90,110)">
+    <rect class="block" x="0" y="0" width="300" height="210"/>
+    <rect class="block" x="300" y="0" width="300" height="210"/>
+    <rect class="block" x="600" y="0" width="300" height="210"/>
+    <text class="label" x="104" y="96">Block0</text>
+    <text class="label" x="404" y="96">Block1</text>
+    <text class="label" x="704" y="96">Block2</text>
+    <rect class="bottom" x="0" y="166" width="900" height="44"/>
+    <text class="green" x="305" y="196">bottom_buffer：整条 block-row 的最后 7 行</text>
+    <line class="dash" x1="300" y1="166" x2="300" y2="210"/>
+    <line class="dash" x1="600" y1="166" x2="600" y2="210"/>
+  </g>
+
+  <path class="arrow" d="M540,335 C540,380 540,410 540,455"/>
+  <text class="blue" x="585" y="402">给下一条 block-row 作为上方 halo</text>
+
+  <g transform="translate(90,455)">
+    <rect class="block" x="0" y="0" width="300" height="210"/>
+    <rect class="block" x="300" y="0" width="300" height="210"/>
+    <rect class="block" x="600" y="0" width="300" height="210"/>
+    <rect class="halo" x="0" y="0" width="900" height="44"/>
+    <rect class="replaceBottom" x="0" y="166" width="300" height="44"/>
+    <text class="blue" x="332" y="30">local_y = -7 ~ -1 时读取</text>
+    <text class="label" x="104" y="126">Block3</text>
+    <text class="label" x="404" y="126">Block4</text>
+    <text class="label" x="704" y="126">Block5</text>
+    <text class="red" x="42" y="196">Block3 bottom 7 行</text>
+  </g>
+
+  <rect class="corner" x="346" y="276" width="44" height="44"/>
+  <path class="cornerArrow" d="M368,320 C470,530 640,650 820,714"/>
+  <rect class="corner" x="820" y="680" width="190" height="68"/>
+  <text class="purple" x="846" y="722">corner_buffer</text>
+  <text class="purple" x="398" y="306">Block0 corner</text>
+  <text class="purple" x="820" y="780">覆盖前先保存</text>
+
+  <path class="replaceArrow" d="M240,645 C210,710 170,710 145,320"/>
+  <text class="red" x="90" y="820">Block3 bottom 替换 bottom_buffer 中 Block0 对应区域</text>
+
+  <g transform="translate(1020,250)">
+    <rect class="block" x="0" y="0" width="170" height="170"/>
+    <rect class="noSave" x="0" y="126" width="170" height="44"/>
+    <text class="small" x="28" y="72">frame bottom</text>
+    <text class="gray" x="22" y="154">不保存</text>
+  </g>
+</svg>

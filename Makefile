@@ -1,13 +1,16 @@
-TOP      ?= tb_downscale_block_buffer
+TOP      ?= tb_downscale_scanner_buffer
 SIMV     ?= simv
 LOG_DIR  ?= logs
+TB_FILE  ?= $(TOP).v
 
 RTL_FILES := \
 	ram_rws_256x160.v \
+	ram_rws_64x128.v \
 	pp_downscale_dst_scan_ctrl.v \
 	downscale_block_buffer.v \
-	tb_dst_scan_ctrl.v \
-	tb_downscale_block_buffer.v
+	pp_downscale_lanczos4_coef_rom.v \
+	pp_downscale_lanczos4_core.v \
+	$(TB_FILE)
 
 VCS      ?= vcs
 VCS_FLAGS ?= \

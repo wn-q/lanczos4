@@ -13,6 +13,16 @@ module pp_downscale_block_buffer (
     data_vld,
     data_rdy,
     data_in,
+    scan_block_ctrl_valid_o,
+    scan_block_ctrl_ready_i,
+    scan_block_start_x_o,
+    scan_block_start_y_o,
+    scan_block_width_o,
+    scan_block_height_o,
+    scan_frame_left_o,
+    scan_frame_right_o,
+    scan_frame_top_o,
+    scan_frame_bottom_o,
     scan_block_done_i,
     scan_center_valid_i,
     scan_center_x_i,
@@ -56,6 +66,16 @@ output       ctrl_rdy;
 input        data_vld;
 input [159:0] data_in;
 output       data_rdy;
+output       scan_block_ctrl_valid_o;
+input        scan_block_ctrl_ready_i;
+output [12:0] scan_block_start_x_o;
+output [12:0] scan_block_start_y_o;
+output [7:0]  scan_block_width_o;
+output [6:0]  scan_block_height_o;
+output        scan_frame_left_o;
+output        scan_frame_right_o;
+output        scan_frame_top_o;
+output        scan_frame_bottom_o;
 input         scan_block_done_i;
 input                          scan_center_valid_i;
 input signed [TAP_COORD_W-1:0] scan_center_x_i;
@@ -290,6 +310,7 @@ assign bottombuf_rd_data_mux = bottombuf_dout[bottombuf_rd_bank_d];
 // 64-tap window 输出寄存器：win_idx=y_idx*8+x_idx，x 方向变化最快。
 reg [640-1:0]                               lanczos_window_pixels_r;
 reg                                         lanczos_window_valid_r;
+reg                                         sent_scan_ctrl_ready;  // 当前 block 的 start_x/start_y/width/height/frame_edge 等信息已经送给 scan 了。
 reg                                         calc_segment_valid;
 reg                                         frame_top_prefill_valid;
 reg                                         scan_done_latched;      // scanner 已经不再请求当前 block 的 center，但输入数据仍可能需要继续接收。
@@ -324,6 +345,15 @@ localparam [2:0] WIN_SRC_CORNER  = 3'd6;
 
 reg [2:0] win_state;                            // 64-tap window read 状态机状态。
 
+assign scan_block_ctrl_valid_o = !scan_done_latched && !sent_scan_ctrl_ready && (cur_state == ST_RECV);
+assign scan_block_start_x_o = block_start_x;
+assign scan_block_start_y_o = block_start_y;
+assign scan_block_width_o   = block_pixel_width;
+assign scan_block_height_o  = block_pixel_height;
+assign scan_frame_left_o    = frame_left_edge;
+assign scan_frame_right_o   = frame_right_edge;
+assign scan_frame_top_o     = frame_top_edge;
+assign scan_frame_bottom_o  = frame_bottom_edge;
 assign scan_window_pixels_o = lanczos_window_pixels_r;
 assign scan_window_valid_o = lanczos_window_valid_r;
 
@@ -360,6 +390,7 @@ wire        center_y_current_only_ready;
 wire        center_data_ready;
 wire        center_ready_now;
 wire        window_done;
+wire        scan_block_ctrl_en;   //表示当前 block 控制信息在这一拍被 scan 成功接收
 // === BOTTOM/CORNER ADD START: bottom/corner 保存控制信号 ===
 wire [6:0]  bottom_row_start;            //底部7行从哪一行开始
 wire [6:0]  bottom_wr_row_offset;        //当前行是底部区域里的第几行
@@ -451,6 +482,7 @@ assign center_data_ready = !scan_done_latched &&
                            (calc_segment_valid || frame_top_prefill_ready) &&
                            center_x_ready &&
                            center_y_ready;  //数据准备好了
+assign scan_block_ctrl_en = scan_block_ctrl_valid_o && scan_block_ctrl_ready_i;
 
 assign center_ready_now = center_data_ready && (win_state == WIN_IDLE); //当前这一拍可以立刻开始处理 scan 的 center 请求。
 assign data_rdy  = (cur_state == ST_RECV) && !center_ready_now;
@@ -1053,6 +1085,7 @@ end
 // ---------------------------------------------------------------------------
 always @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
+        sent_scan_ctrl_ready <= 1'b0;
         calc_segment_valid <= 1'b0;
         frame_top_prefill_valid <= 1'b0;
         scan_done_latched <= 1'b0;
@@ -1065,9 +1098,12 @@ always @(posedge clk or negedge rst_n) begin
         calc_last_row_in_block <= 1'b0;
     end else begin
         if (ctrl_load) begin
+            sent_scan_ctrl_ready <= 1'b0;
             calc_segment_valid <= 1'b0;
             frame_top_prefill_valid <= 1'b0;
             scan_done_latched <= 1'b0;
+        end else if (scan_block_ctrl_en) begin
+            sent_scan_ctrl_ready <= 1'b1;
         end
 
         if (scan_block_done_i) begin

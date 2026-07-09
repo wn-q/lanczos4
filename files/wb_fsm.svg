@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="1180" viewBox="0 0 1500 1180">
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-soft" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#94a3b8"/>
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .title { font: 700 36px Arial, "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .subtitle { font: 18px Arial, "Microsoft YaHei", sans-serif; fill: #475569; }
+      .state { fill: #f8fafc; stroke: #0f172a; stroke-width: 2.2; rx: 16; }
+      .state-main { fill: #eff6ff; stroke: #2563eb; stroke-width: 2.8; rx: 16; }
+      .state-opt { fill: #fff7ed; stroke: #ea580c; stroke-width: 2.6; rx: 16; }
+      .state-done { fill: #ecfdf5; stroke: #059669; stroke-width: 2.8; rx: 16; }
+      .name { font: 700 25px Arial, "Microsoft YaHei", sans-serif; fill: #0f172a; }
+      .body { font: 18px Arial, "Microsoft YaHei", sans-serif; fill: #334155; }
+      .small { font: 16px Arial, "Microsoft YaHei", sans-serif; fill: #475569; }
+      .code { font: 16px Consolas, "Courier New", monospace; fill: #1e293b; }
+      .edge { fill: none; stroke: #2563eb; stroke-width: 3; marker-end: url(#arrow); }
+      .edge-soft { fill: none; stroke: #94a3b8; stroke-width: 2.4; stroke-dasharray: 7 7; marker-end: url(#arrow-soft); }
+      .note { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 12; }
+      .panel { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.8; rx: 14; }
+      .panel-title { font: 700 22px Arial, "Microsoft YaHei", sans-serif; fill: #0f172a; }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1500" height="1180"/>
+
+  <text x="750" y="54" text-anchor="middle" class="title">WB Writeback Scheduler FSM</text>
+  <text x="750" y="88" text-anchor="middle" class="subtitle">简化版状态机图：按写回调度顺序展示，虚线表示可以跳过的可选阶段</text>
+
+  <!-- Left legend -->
+  <rect x="70" y="130" width="360" height="210" class="panel"/>
+  <text x="100" y="170" class="panel-title">图例</text>
+  <rect x="100" y="195" width="34" height="20" class="state-main"/>
+  <text x="150" y="212" class="small">主写回阶段</text>
+  <rect x="100" y="235" width="34" height="20" class="state-opt"/>
+  <text x="150" y="252" class="small">可选 halo / 边界保存阶段</text>
+  <rect x="100" y="275" width="34" height="20" class="state-done"/>
+  <text x="150" y="292" class="small">完成状态</text>
+  <text x="100" y="324" class="code">writeback_done = (wb_state == WB_DONE)</text>
+
+  <!-- Main vertical flow states -->
+  <rect x="575" y="130" width="350" height="92" class="state-main"/>
+  <text x="750" y="166" text-anchor="middle" class="name">WB_IDLE</text>
+  <text x="750" y="196" text-anchor="middle" class="body">等待 ST_WRITEBACK 调度</text>
+
+  <rect x="575" y="280" width="350" height="92" class="state-opt"/>
+  <text x="750" y="316" text-anchor="middle" class="name">WB_SAVE_RIGHT</text>
+  <text x="750" y="346" text-anchor="middle" class="body">保存旧行右 7 列到 right_buffer</text>
+
+  <rect x="575" y="430" width="350" height="92" class="state"/>
+  <text x="750" y="466" text-anchor="middle" class="name">WB_WRITE_L7</text>
+  <text x="750" y="496" text-anchor="middle" class="body">写回上一段 left7_reg</text>
+
+  <rect x="575" y="580" width="350" height="92" class="state-main"/>
+  <text x="750" y="616" text-anchor="middle" class="name">WB_WRITE_CUR</text>
+  <text x="750" y="646" text-anchor="middle" class="body">写回当前 cur16_reg 安全部分</text>
+
+  <rect x="575" y="730" width="350" height="92" class="state-opt"/>
+  <text x="750" y="766" text-anchor="middle" class="name">WB_SAVE_CORNER</text>
+  <text x="750" y="796" text-anchor="middle" class="body">覆盖 bottom 前保存旧 7x7 corner</text>
+
+  <rect x="575" y="880" width="350" height="92" class="state"/>
+  <text x="750" y="916" text-anchor="middle" class="name">WB_WRITE_BOTTOM</text>
+  <text x="750" y="946" text-anchor="middle" class="body">写当前 block 最后 7 行到底部缓存</text>
+
+  <rect x="575" y="1030" width="350" height="92" class="state-done"/>
+  <text x="750" y="1066" text-anchor="middle" class="name">WB_DONE</text>
+  <text x="750" y="1096" text-anchor="middle" class="body">写回完成，通知主 FSM</text>
+
+  <!-- Main arrows -->
+  <path class="edge" d="M750,222 L750,280"/>
+  <path class="edge" d="M750,372 L750,430"/>
+  <path class="edge" d="M750,522 L750,580"/>
+  <path class="edge" d="M750,672 L750,730"/>
+  <path class="edge" d="M750,822 L750,880"/>
+  <path class="edge" d="M750,972 L750,1030"/>
+
+  <!-- Side condition notes, separated from arrows -->
+  <rect x="965" y="245" width="380" height="70" class="note"/>
+  <text x="990" y="273" class="small">进入条件</text>
+  <text x="990" y="298" class="code">save_evict_right_en</text>
+
+  <rect x="965" y="390" width="380" height="78" class="note"/>
+  <text x="990" y="418" class="small">进入条件</text>
+  <text x="990" y="443" class="code">!calc_first_seg_in_row</text>
+
+  <rect x="965" y="548" width="380" height="92" class="note"/>
+  <text x="990" y="576" class="small">等待 line 写完成</text>
+  <text x="990" y="601" class="code">line_wr_done</text>
+  <text x="990" y="626" class="small">非最后段时更新 left7_reg</text>
+
+  <rect x="965" y="700" width="380" height="78" class="note"/>
+  <text x="990" y="728" class="small">进入条件</text>
+  <text x="990" y="753" class="code">bottom_save_en &amp;&amp; save_corner_en</text>
+
+  <rect x="965" y="850" width="380" height="78" class="note"/>
+  <text x="990" y="878" class="small">进入条件</text>
+  <text x="990" y="903" class="code">bottom_save_en</text>
+
+  <rect x="965" y="1000" width="380" height="78" class="note"/>
+  <text x="990" y="1028" class="small">完成条件</text>
+  <text x="990" y="1053" class="code">bottom_wr_done 或无需 bottom 保存</text>
+
+  <!-- Optional bypass arrows use separate lanes to avoid visual overlap -->
+  <path class="edge-soft" d="M625,222 C520,260 520,575 575,626"/>
+  <rect x="130" y="410" width="340" height="70" class="note"/>
+  <text x="155" y="438" class="small">可跳过 SAVE_RIGHT / WRITE_L7</text>
+  <text x="155" y="463" class="code">first segment 且无需 save right</text>
+
+  <path class="edge-soft" d="M575,650 C440,700 440,1028 575,1076"/>
+  <rect x="130" y="735" width="340" height="92" class="note"/>
+  <text x="155" y="763" class="small">可跳过 bottom 相关阶段</text>
+  <text x="155" y="788" class="code">!bottom_save_en</text>
+  <text x="155" y="813" class="small">cur 写完后直接进入 WB_DONE</text>
+
+  <path class="edge-soft" d="M925,776 C1010,790 1010,910 925,926"/>
+  <rect x="1035" y="790" width="340" height="70" class="note"/>
+  <text x="1060" y="818" class="small">如果不需要保存 corner</text>
+  <text x="1060" y="843" class="code">save_corner_en = 0</text>
+
+  <!-- Return arrow -->
+  <path class="edge-soft" d="M690,1122 C300,1122 300,145 575,176"/>
+  <rect x="130" y="960" width="340" height="70" class="note"/>
+  <text x="155" y="988" class="small">WB_DONE 下一拍回到 WB_IDLE</text>
+  <text x="155" y="1013" class="code">wb_state &lt;= WB_IDLE</text>
+</svg>
