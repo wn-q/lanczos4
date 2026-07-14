@@ -48,15 +48,34 @@ localparam [3:0] SC_WAIT_WINDOW = 4'd5;
 localparam [3:0] SC_OUT         = 4'd6;
 localparam [3:0] SC_NEXT_POINT  = 4'd7;
 localparam [3:0] SC_BLOCK_DONE  = 4'd8;
+localparam [3:0] SC_GEOM_INIT   = 4'd9;
+localparam [3:0] SC_GEOM_SCAN   = 4'd10;
+localparam [3:0] SC_SEND_CTRL   = 4'd11;
 
 reg [3:0] sc_state;
 
 reg [DST_W-1:0] saved_edge_x;
 reg [DST_W-1:0] saved_edge_y;
-reg [DST_W-1:0] cur_edge_x;
-reg [DST_W-1:0] cur_edge_y;
-reg [DST_W-1:0] next_edge_x;
-reg [DST_W-1:0] next_edge_y;
+
+// Downscale-space geometry for the current source block.  These values are
+// calculated before the first center request, then copied into the ctrl that
+// travels with every pixel of this output block.
+reg [DST_W-1:0] block_start_x_new;
+reg [DST_W-1:0] block_start_y_new;
+reg [7:0]       block_width_new;
+reg [6:0]       block_height_new;
+reg [DST_W-1:0] plan_edge_x;
+reg [DST_W-1:0] plan_edge_y;
+
+// Four-candidate-per-cycle geometry search state.  X and Y advance in
+// parallel, so the setup latency is the slower direction rather than X+Y.
+reg [DST_W-1:0]   geom_dst_x;
+reg [DST_W-1:0]   geom_dst_y;
+reg [SRC_Q_W-1:0] geom_src_x_q9;
+reg [SRC_Q_W-1:0] geom_src_y_q9;
+reg                 geom_x_done;
+reg                 geom_y_done;
+reg [53:0]          updated_ctrl_r;
 
 reg [6:0]  block_pixel_height;   // 当前 block 高度，scanner 用它判断 y 方向 block 边界。
 reg [7:0]  block_pixel_width;    // 当前 block 宽度，scanner 用它判断 x 方向 block 边界。
@@ -82,39 +101,45 @@ reg [DST_W-1:0] req_dst_y;
 reg [8:0] req_phase_x_q9;
 reg [8:0] req_phase_y_q9;
 reg req_block_row_last;
-reg req_row_last_by_block;
 reg req_bypass_en;
 
 wire scale_integer_bypass;
 wire [DST_W:0] dst_x_twice_plus_one;
 wire [DST_W:0] dst_y_twice_plus_one;
-wire [DST_W:0] next_x_twice_plus_one;
 
 wire [SRC_Q_W-1:0] scan_src_x_q9;
 wire [SRC_Q_W-1:0] scan_src_y_q9;
-wire [SRC_Q_W-1:0] next_src_x_q9;
 wire signed [TAP_COORD_W-1:0] scan_center_x;
 wire signed [TAP_COORD_W-1:0] scan_center_y;
-wire signed [TAP_COORD_W-1:0] next_center_x;
 wire [8:0] scan_phase_x_q9;
 wire [8:0] scan_phase_y_q9;
-
-wire signed [TAP_COORD_W-1:0] block_start_x_s;
-wire signed [TAP_COORD_W-1:0] block_start_y_s;
-wire signed [TAP_COORD_W-1:0] block_x_limit_s;
-wire signed [TAP_COORD_W-1:0] block_y_limit_s;
-wire signed [TAP_COORD_W-1:0] local_center_x;
-wire signed [TAP_COORD_W-1:0] local_center_y;
-wire signed [TAP_COORD_W-1:0] next_local_center_x;
 
 wire dst_x_at_frame_end;
 wire cur_x_blocked;
 wire cur_y_blocked;
-wire next_x_blocked;
 wire current_row_last;
-wire row_last_by_block;
 wire ctrl_load;
 wire new_frame_start;
+
+wire [DST_W-1:0] geom_start_x;
+wire [DST_W-1:0] geom_start_y;
+wire [13:0]      geom_x_limit;
+wire [13:0]      geom_y_limit;
+wire [SRC_Q_W-1:0] geom_step_q9;
+wire [SRC_Q_W-1:0] geom_src_x_q9_1;
+wire [SRC_Q_W-1:0] geom_src_x_q9_2;
+wire [SRC_Q_W-1:0] geom_src_x_q9_3;
+wire [SRC_Q_W-1:0] geom_src_y_q9_1;
+wire [SRC_Q_W-1:0] geom_src_y_q9_2;
+wire [SRC_Q_W-1:0] geom_src_y_q9_3;
+wire [DST_W-1:0] block_width_new_calc;
+wire [DST_W-1:0] block_height_new_calc;
+wire geom_x_done_next;
+wire geom_y_done_next;
+reg  geom_x_hit;
+reg  geom_y_hit;
+reg [DST_W-1:0] geom_x_plan_value;
+reg [DST_W-1:0] geom_y_plan_value;
 
 
 
@@ -124,33 +149,113 @@ assign scale_integer_bypass = (scale_q8 == 12'd768)  ||
 
 assign dst_x_twice_plus_one = {dst_x, 1'b0} + 14'd1;
 assign dst_y_twice_plus_one = {dst_y, 1'b0} + 14'd1;
-assign next_x_twice_plus_one = {dst_x + 13'd1, 1'b0} + 14'd1;
 
 assign scan_src_x_q9 = (scale_q8 * dst_x_twice_plus_one) - 21'd256;
 assign scan_src_y_q9 = (scale_q8 * dst_y_twice_plus_one) - 21'd256;
-assign next_src_x_q9 = (scale_q8 * next_x_twice_plus_one) - 21'd256;
 
 assign scan_center_x = $signed({1'b0, scan_src_x_q9[SRC_Q_W-1:9]});
 assign scan_center_y = $signed({1'b0, scan_src_y_q9[SRC_Q_W-1:9]});
-assign next_center_x = $signed({1'b0, next_src_x_q9[SRC_Q_W-1:9]});
 assign scan_phase_x_q9 = scan_src_x_q9[8:0];
 assign scan_phase_y_q9 = scan_src_y_q9[8:0];
 
-assign block_start_x_s = $signed(block_start_x[TAP_COORD_W-1:0]);
-assign block_start_y_s = $signed(block_start_y[TAP_COORD_W-1:0]);
-assign block_x_limit_s = $signed({5'd0, block_pixel_width}) - 13'sd5;
-assign block_y_limit_s = $signed({6'd0, block_pixel_height}) - 13'sd5;
-assign local_center_x = scan_center_x - block_start_x_s;
-assign local_center_y = scan_center_y - block_start_y_s;
-assign next_local_center_x = next_center_x - block_start_x_s;
-
 assign dst_x_at_frame_end = (dst_x == (dst_width - 1'b1));
-assign cur_x_blocked = !frame_right_edge && (local_center_x > block_x_limit_s);
-assign cur_y_blocked = !frame_bottom_edge && (local_center_y > block_y_limit_s);
-assign next_x_blocked = !frame_right_edge && (next_local_center_x > block_x_limit_s);
+assign cur_x_blocked = !frame_right_edge && (dst_x >= plan_edge_x);
+assign cur_y_blocked = !frame_bottom_edge && (dst_y >= plan_edge_y);
+assign current_row_last = frame_right_edge ? dst_x_at_frame_end :
+                                              ((dst_x + 13'd1) >= plan_edge_x);
 
-assign row_last_by_block = !dst_x_at_frame_end && next_x_blocked;
-assign current_row_last = dst_x_at_frame_end || row_last_by_block;
+assign geom_start_x = frame_left_edge ? {DST_W{1'b0}} : saved_edge_x;
+assign geom_start_y = frame_top_edge  ? {DST_W{1'b0}} : saved_edge_y;
+
+// The current buffer always returns a full 8x8 window.  Keep a +4 guard for
+// every scale until a dedicated bypass-only center-read path is added.
+assign geom_x_limit = {1'b0, block_start_x} + {6'd0, block_pixel_width} - 14'd4;
+assign geom_y_limit = {1'b0, block_start_y} + {7'd0, block_pixel_height} - 14'd4;
+assign geom_step_q9 = {scale_q8, 1'b0};
+
+assign geom_src_x_q9_1 = geom_src_x_q9 + geom_step_q9;
+assign geom_src_x_q9_2 = geom_src_x_q9_1 + geom_step_q9;
+assign geom_src_x_q9_3 = geom_src_x_q9_2 + geom_step_q9;
+assign geom_src_y_q9_1 = geom_src_y_q9 + geom_step_q9;
+assign geom_src_y_q9_2 = geom_src_y_q9_1 + geom_step_q9;
+assign geom_src_y_q9_3 = geom_src_y_q9_2 + geom_step_q9;
+
+assign block_width_new_calc = plan_edge_x - block_start_x_new;
+assign block_height_new_calc = plan_edge_y - block_start_y_new;
+assign geom_x_done_next = geom_x_done || geom_x_hit;
+assign geom_y_done_next = geom_y_done || geom_y_hit;
+
+// Compare four monotonically increasing X candidates in parallel.  The first
+// one reaching the exclusive source limit is the next block's dst_x start.
+always @(*) begin
+    geom_x_hit = 1'b0;
+    geom_x_plan_value = {DST_W{1'b0}};
+
+    if (frame_right_edge) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = dst_width;
+    end else if (geom_dst_x >= dst_width) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = dst_width;
+    end else if (geom_src_x_q9[SRC_Q_W-1:9] >= geom_x_limit) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = geom_dst_x;
+    end else if ((geom_dst_x + 13'd1) >= dst_width) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = dst_width;
+    end else if (geom_src_x_q9_1[SRC_Q_W-1:9] >= geom_x_limit) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = geom_dst_x + 13'd1;
+    end else if ((geom_dst_x + 13'd2) >= dst_width) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = dst_width;
+    end else if (geom_src_x_q9_2[SRC_Q_W-1:9] >= geom_x_limit) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = geom_dst_x + 13'd2;
+    end else if ((geom_dst_x + 13'd3) >= dst_width) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = dst_width;
+    end else if (geom_src_x_q9_3[SRC_Q_W-1:9] >= geom_x_limit) begin
+        geom_x_hit = 1'b1;
+        geom_x_plan_value = geom_dst_x + 13'd3;
+    end
+end
+
+// Y direction uses the same four-candidate search and runs in the same cycle
+// as X.  This avoids serial X-then-Y setup latency.
+always @(*) begin
+    geom_y_hit = 1'b0;
+    geom_y_plan_value = {DST_W{1'b0}};
+
+    if (frame_bottom_edge) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = dst_height;
+    end else if (geom_dst_y >= dst_height) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = dst_height;
+    end else if (geom_src_y_q9[SRC_Q_W-1:9] >= geom_y_limit) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = geom_dst_y;
+    end else if ((geom_dst_y + 13'd1) >= dst_height) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = dst_height;
+    end else if (geom_src_y_q9_1[SRC_Q_W-1:9] >= geom_y_limit) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = geom_dst_y + 13'd1;
+    end else if ((geom_dst_y + 13'd2) >= dst_height) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = dst_height;
+    end else if (geom_src_y_q9_2[SRC_Q_W-1:9] >= geom_y_limit) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = geom_dst_y + 13'd2;
+    end else if ((geom_dst_y + 13'd3) >= dst_height) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = dst_height;
+    end else if (geom_src_y_q9_3[SRC_Q_W-1:9] >= geom_y_limit) begin
+        geom_y_hit = 1'b1;
+        geom_y_plan_value = geom_dst_y + 13'd3;
+    end
+end
 
 assign req_buf_data_valid_o = (sc_state == SC_REQ_CENTER) || (sc_state == SC_WAIT_WINDOW);
 assign ctrl_rdy_o = (sc_state == SC_IDLE);
@@ -206,10 +311,19 @@ always @(posedge clk) begin
         sc_state <= SC_IDLE;
         saved_edge_x <= {DST_W{1'b0}};
         saved_edge_y <= {DST_W{1'b0}};
-        cur_edge_x <= {DST_W{1'b0}};
-        cur_edge_y <= {DST_W{1'b0}};
-        next_edge_x <= {DST_W{1'b0}};
-        next_edge_y <= {DST_W{1'b0}};
+        block_start_x_new <= {DST_W{1'b0}};
+        block_start_y_new <= {DST_W{1'b0}};
+        block_width_new <= 8'd0;
+        block_height_new <= 7'd0;
+        plan_edge_x <= {DST_W{1'b0}};
+        plan_edge_y <= {DST_W{1'b0}};
+        geom_dst_x <= {DST_W{1'b0}};
+        geom_dst_y <= {DST_W{1'b0}};
+        geom_src_x_q9 <= {SRC_Q_W{1'b0}};
+        geom_src_y_q9 <= {SRC_Q_W{1'b0}};
+        geom_x_done <= 1'b0;
+        geom_y_done <= 1'b0;
+        updated_ctrl_r <= 54'd0;
         dst_x <= {DST_W{1'b0}};
         dst_y <= {DST_W{1'b0}};
         req_dst_x <= {DST_W{1'b0}};
@@ -217,7 +331,6 @@ always @(posedge clk) begin
         req_phase_x_q9 <= 9'd0;
         req_phase_y_q9 <= 9'd0;
         req_block_row_last <= 1'b0;
-        req_row_last_by_block <= 1'b0;
         req_bypass_en <= 1'b0;
         buf_center_x_o <= {TAP_COORD_W{1'b0}};
         buf_center_y_o <= {TAP_COORD_W{1'b0}};
@@ -242,22 +355,77 @@ always @(posedge clk) begin
                 end
             end
             
-            SC_INIT_BLOCK:begin
-                    if (new_frame_start) begin
-                        saved_edge_x <= {DST_W{1'b0}};
-                        saved_edge_y <= {DST_W{1'b0}};
-                        next_edge_x <= {DST_W{1'b0}};
-                        next_edge_y <= {DST_W{1'b0}};
+            SC_INIT_BLOCK: begin
+                if (new_frame_start) begin
+                    saved_edge_x <= {DST_W{1'b0}};
+                    saved_edge_y <= {DST_W{1'b0}};
+                end
+                sc_state <= SC_GEOM_INIT;
+            end
+
+            // Start geometry search from the saved output edge.  The Q9
+            // source coordinate is calculated once; subsequent candidates
+            // advance only by 2 * scale_q8.
+            SC_GEOM_INIT: begin
+                block_start_x_new <= geom_start_x;
+                block_start_y_new <= geom_start_y;
+                geom_dst_x <= geom_start_x;
+                geom_dst_y <= geom_start_y;
+                geom_src_x_q9 <= (scale_q8 * ({geom_start_x, 1'b0} + 14'd1)) - 21'd256;
+                geom_src_y_q9 <= (scale_q8 * ({geom_start_y, 1'b0} + 14'd1)) - 21'd256;
+                geom_x_done <= 1'b0;
+                geom_y_done <= 1'b0;
+                sc_state <= SC_GEOM_SCAN;
+            end
+
+            // Search four destination coordinates for X and Y in parallel.
+            // Each direction stops at its first source-center boundary.
+            SC_GEOM_SCAN: begin
+                if (!geom_x_done) begin
+                    if (geom_x_hit) begin
+                        plan_edge_x <= geom_x_plan_value;
+                        geom_x_done <= 1'b1;
+                    end else begin
+                        geom_dst_x <= geom_dst_x + 13'd4;
+                        geom_src_x_q9 <= geom_src_x_q9 +
+                                         geom_step_q9 + geom_step_q9 +
+                                         geom_step_q9 + geom_step_q9;
                     end
-                    cur_edge_x <= frame_left_edge ? {DST_W{1'b0}} : saved_edge_x;
-                    cur_edge_y <= frame_top_edge ? {DST_W{1'b0}} : saved_edge_y;
-                    dst_x <= frame_left_edge ? {DST_W{1'b0}} : saved_edge_x;
-                    dst_y <= frame_top_edge ? {DST_W{1'b0}} : saved_edge_y;
-                    next_edge_x <= frame_left_edge ? {DST_W{1'b0}} : saved_edge_x;
-                    if (frame_left_edge) begin
-                        next_edge_y <= frame_top_edge ? {DST_W{1'b0}} : saved_edge_y;
+                end
+
+                if (!geom_y_done) begin
+                    if (geom_y_hit) begin
+                        plan_edge_y <= geom_y_plan_value;
+                        geom_y_done <= 1'b1;
+                    end else begin
+                        geom_dst_y <= geom_dst_y + 13'd4;
+                        geom_src_y_q9 <= geom_src_y_q9 +
+                                         geom_step_q9 + geom_step_q9 +
+                                         geom_step_q9 + geom_step_q9;
                     end
-                    sc_state <= SC_CALC;
+                end
+
+                if (geom_x_done_next && geom_y_done_next) begin
+                    sc_state <= SC_SEND_CTRL;
+                end
+            end
+
+            // plan_edge_* are exclusive output bounds.  Form the four new
+            // ctrl fields before the first center request of this block.
+            SC_SEND_CTRL: begin
+                block_width_new <= block_width_new_calc[7:0];
+                block_height_new <= block_height_new_calc[6:0];
+                updated_ctrl_r <= {
+                    fg2pp_ctrl_r[53:49],
+                    block_start_y_new[12:0],
+                    block_start_x_new[12:0],
+                    fg2pp_ctrl_r[22:15],
+                    block_width_new_calc[7:0],
+                    block_height_new_calc[6:0]
+                };
+                dst_x <= block_start_x_new;
+                dst_y <= block_start_y_new;
+                sc_state <= SC_CALC;
             end
 
             SC_CALC: begin
@@ -268,15 +436,13 @@ always @(posedge clk) begin
                 if (dst_y >= dst_height) begin
                     sc_state <= SC_BLOCK_DONE;
                 end else if (cur_y_blocked) begin
-                    next_edge_y <= dst_y;
                     sc_state <= SC_BLOCK_DONE;
                 end else if (dst_x >= dst_width) begin
-                    dst_x <= cur_edge_x;
+                    dst_x <= block_start_x_new;
                     dst_y <= dst_y + 13'd1;
                     sc_state <= SC_CALC;
                 end else if (cur_x_blocked) begin
-                    next_edge_x <= dst_x;
-                    dst_x <= cur_edge_x;
+                    dst_x <= block_start_x_new;
                     dst_y <= dst_y + 13'd1;
                     sc_state <= SC_CALC;
                 end else begin
@@ -287,7 +453,6 @@ always @(posedge clk) begin
                     req_phase_x_q9 <= scan_phase_x_q9;
                     req_phase_y_q9 <= scan_phase_y_q9;
                     req_block_row_last <= current_row_last;
-                    req_row_last_by_block <= row_last_by_block;
                     req_bypass_en <= scale_integer_bypass;
                     sc_state <= SC_REQ_CENTER;
                 end
@@ -306,7 +471,7 @@ always @(posedge clk) begin
                     lanczos_window_pixels_o <= buf_window_pixels_i;
                     lanczos_block_row_last_o <= req_block_row_last;
                     lanczos_bypass_en_o <= req_bypass_en;
-                    lanczos_ctrl_o <= {10'd0, fg2pp_ctrl_r};
+                    lanczos_ctrl_o <= {10'd0, updated_ctrl_r};
                     lanczos_valid_o <= 1'b1;
                     sc_state <= SC_OUT;
                 end
@@ -321,10 +486,7 @@ always @(posedge clk) begin
 
             SC_NEXT_POINT: begin
                 if (req_block_row_last) begin
-                    if (req_row_last_by_block) begin
-                        next_edge_x <= req_dst_x + 13'd1;
-                    end
-                    dst_x <= cur_edge_x;
+                    dst_x <= block_start_x_new;
                     dst_y <= req_dst_y + 13'd1;
                 end else begin
                     dst_x <= req_dst_x + 13'd1;
@@ -339,12 +501,11 @@ always @(posedge clk) begin
                     saved_edge_x <= {DST_W{1'b0}};
                     if (frame_bottom_edge) begin
                         saved_edge_y <= {DST_W{1'b0}};
-                        next_edge_y <= {DST_W{1'b0}};
                     end else begin
-                        saved_edge_y <= next_edge_y;
+                        saved_edge_y <= plan_edge_y;
                     end
                 end else begin
-                    saved_edge_x <= next_edge_x;
+                    saved_edge_x <= plan_edge_x;
                 end
                 sc_state <= SC_IDLE;
             end

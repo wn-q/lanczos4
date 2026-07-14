@@ -1,7 +1,8 @@
 TOP      ?= tb_downscale_scanner_buffer
 SIMV     ?= simv
 LOG_DIR  ?= logs
-TB_FILE  ?= $(TOP).v
+CASE_DIR ?= case
+TB_FILE  ?= $(CASE_DIR)/$(TOP).v
 
 RTL_FILES := \
 	ram_rws_256x160.v \

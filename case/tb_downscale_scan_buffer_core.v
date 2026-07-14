@@ -66,6 +66,8 @@ integer seen_idx;
 reg [1023:0] seen_dst;
 reg block_scan_done_seen;
 reg [53:0] current_block_ctrl;
+integer expected_saved_edge_x;
+integer expected_saved_edge_y;
 
 assign buffer_center_x = {center_x[TAP_COORD_W-1], center_x};
 assign buffer_center_y = {center_y[TAP_COORD_W-1], center_y};
@@ -368,6 +370,8 @@ begin
     seen_dst = 1024'd0;
     block_scan_done_seen = 1'b0;
     current_block_ctrl = 54'd0;
+    expected_saved_edge_x = 0;
+    expected_saved_edge_y = 0;
 
     repeat (5) @(negedge clk);
     rst_n = 1'b1;
@@ -386,6 +390,11 @@ task config_block;
     input integer frame_bottom;
     input integer frame_left;
     input integer frame_right;
+    integer new_start_x;
+    integer new_start_y;
+    integer new_plan_x;
+    integer new_plan_y;
+    integer geom_guard;
 begin
     block_scan_done_seen = 1'b0;
 
@@ -404,6 +413,46 @@ begin
     fg2pp_ctrl[35:23] = start_x[12:0];
     fg2pp_ctrl[48:36] = start_y[12:0];
     current_block_ctrl = fg2pp_ctrl;
+
+    // The current buffer still returns a full 8x8 window for every request,
+    // so this test uses the same Lanczos4 right/bottom guard as the scanner.
+    geom_guard = 4;
+    new_start_x = frame_left ? 0 : expected_saved_edge_x;
+    new_start_y = frame_top ? 0 : expected_saved_edge_y;
+
+    if (frame_right) begin
+        new_plan_x = dst_width;
+    end else begin
+        new_plan_x = new_start_x;
+        while ((new_plan_x < dst_width) &&
+               (((scale_q8 * ((new_plan_x * 2) + 1) - 256) >> 9) <
+                (start_x + width - geom_guard))) begin
+            new_plan_x = new_plan_x + 1;
+        end
+    end
+
+    if (frame_bottom) begin
+        new_plan_y = dst_height;
+    end else begin
+        new_plan_y = new_start_y;
+        while ((new_plan_y < dst_height) &&
+               (((scale_q8 * ((new_plan_y * 2) + 1) - 256) >> 9) <
+                (start_y + height - geom_guard))) begin
+            new_plan_y = new_plan_y + 1;
+        end
+    end
+
+    current_block_ctrl[6:0]   = (new_plan_y - new_start_y);
+    current_block_ctrl[14:7]  = (new_plan_x - new_start_x);
+    current_block_ctrl[35:23] = new_start_x[12:0];
+    current_block_ctrl[48:36] = new_start_y[12:0];
+
+    if (frame_right) begin
+        expected_saved_edge_x = 0;
+        expected_saved_edge_y = frame_bottom ? 0 : new_plan_y;
+    end else begin
+        expected_saved_edge_x = new_plan_x;
+    end
 
     timeout_cnt = 0;
     while (!(ctrl_rdy && scan_ctrl_rdy) && (timeout_cnt < 20000)) begin
@@ -426,6 +475,9 @@ begin
     $display("[%0t] CONFIG_BLOCK start=(%0d,%0d) size=%0dx%0d top=%0d bottom=%0d left=%0d right=%0d",
              $time, start_x, start_y, width, height,
              frame_top, frame_bottom, frame_left, frame_right);
+    $display("[%0t] EXPECTED_DOWNSCALE_CTRL start=(%0d,%0d) size=%0dx%0d",
+             $time, new_start_x, new_start_y,
+             new_plan_x - new_start_x, new_plan_y - new_start_y);
 end
 endtask
 
